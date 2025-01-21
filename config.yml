@@ -40,13 +40,6 @@
         - docker-buildx
         - docker-compose
 
-  - name: Ensure Docker is installed
-    apt:
-      name: docker.io
-      state: present
-      update_cache: yes
-    become: true
-
   - name: Ensure Docker service is running
     service:
       name: docker
