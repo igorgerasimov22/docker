@@ -1,0 +1,118 @@
+---
+- name: Config docker with ansible
+  hosts: all
+  become: true
+
+  tasks:
+  - name: Rename VM's
+    ansible.builtin.hostname:
+      name: docker
+    notify: Reboot server
+
+  - name: Update cache
+    ansible.builtin.apt:
+      update_cache: true
+      cache_valid_time: 3600
+
+  - name: Ensure /etc/apt/keyrings directory exists with correct permissions
+    ansible.builtin.file:
+      path: /etc/apt/keyrings
+      state: directory
+      mode: '0755'
+
+  - name: Download Docker GPG key
+    ansible.builtin.get_url:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      dest: /etc/apt/keyrings/docker.asc
+      mode: '0644'
+
+  - name: Set read permissions for the Docker GPG key
+    ansible.builtin.file:
+      path: /etc/apt/keyrings/docker.asc
+      mode: '0644'
+
+  - name: Install package
+    ansible.builtin.apt:
+      name:
+        - ca-certificates 
+        - curl
+        - docker.io
+        - docker-buildx
+        - docker-compose
+
+  - name: Ensure Docker is installed
+    apt:
+      name: docker.io
+      state: present
+      update_cache: yes
+    become: true
+
+  - name: Ensure Docker service is running
+    service:
+      name: docker
+      state: started
+      enabled: true
+    become: true
+
+  - name: Create working directory for Dockerfile and configuration
+    file:
+      path: /tmp/custom-nginx
+      state: directory
+      mode: '0755'
+
+  - name: Create Dockerfile
+    copy:
+      dest: /tmp/custom-nginx/Dockerfile
+      content: |
+        FROM alpine:latest
+        RUN apk add --no-cache nginx
+        COPY nginx.conf /etc/nginx/nginx.conf
+        RUN mkdir -p /var/www/html && echo "<h1>Welcome to Custom Nginx on Alpine!</h1>" > /var/www/html/index.html
+        EXPOSE 80
+        CMD ["nginx", "-g", "daemon off;"]
+
+  - name: Create custom Nginx configuration
+    copy:
+      dest: /tmp/custom-nginx/nginx.conf
+      content: |
+        worker_processes  1;
+
+        events {
+            worker_connections  1024;
+        }
+
+        http {
+            include       mime.types;
+            default_type  application/octet-stream;
+
+            sendfile        on;
+
+            server {
+                listen       8080;
+                server_name  localhost;
+
+                location / {
+                    root   /var/www/html;
+                    index  index.html;
+                }
+            }
+        }
+
+  - name: Build the custom Nginx Docker image
+    command: docker build -t custom-nginx:alpine /tmp/custom-nginx
+    args:
+      chdir: /tmp/custom-nginx
+
+  - name: Run the custom Nginx container
+    docker_container:
+      name: custom-nginx
+      image: custom-nginx:alpine
+      state: started
+      ports:
+        - "80:8080"
+
+  handlers:
+  - name: Reboot server
+    ansible.builtin.reboot:
+      reboot_timeout: 600
+      connect_timeout: 60
